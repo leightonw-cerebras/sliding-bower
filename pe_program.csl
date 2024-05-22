@@ -1,0 +1,78 @@
+param num_elems: u16;
+param kernel_width: u16;
+
+param send_east_color: color;
+param recv_west_color: color;
+
+param memcpy_params: comptime_struct; // Struct containing memcpy params
+
+const compute_task_id: local_task_id = @get_local_task_id(8);
+
+// This module is needed for memcpy infrastructure
+const sys_mod = @import_module("<memcpy/memcpy>", memcpy_params);
+const layout_mod = @import_module("<layout>");
+
+// Array containing local vector
+var arr0 = @zeros([num_elems]f32);
+const arr0_dsd = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{num_elems} -> arr0[i] });
+var ptr_arr0 : [*]f32 = &arr0;
+
+// Array into which we receive neighbor vector
+var arr1 = @zeros([num_elems]f32);
+const arr1_dsd = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{num_elems} -> arr1[i] });
+
+// Array from which we send out neighbor vector
+var arr2 = @zeros([num_elems]f32);
+const arr2_dsd = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{num_elems} -> arr1[i] });
+
+var dot_products = @zeros([kernel_width]f32);
+var ptr_dot_products : [*]f32 = &dot_products;
+
+const send_east_dsd = @get_dsd(fabout_dsd, .{.fabric_color = send_east_color, .extent = num_elems, .output_queue = @get_output_queue(2)});
+const recv_west_dsd = @get_dsd(fabin_dsd,  .{.fabric_color = recv_west_color, .extent = num_elems, .input_queue = @get_input_queue(3)});
+
+// How many vectors have been processed
+var processed: u16 = 0;
+
+// Index of current vector being processed
+// First vector is from west neighbor
+var idx: u16 = 0;
+
+// Kick off computation by receiving vector west neighbor, sending to east neighbor
+fn main_fn() void {
+  // First received vector will be from left neighbor modulo kernel_width
+  idx = if (layout_mod.get_x_coord() == 0) kernel_width-1 else layout_mod.get_x_coord()-1;
+
+  @fmovs(send_east_dsd, arr0_dsd, .{ .async = true, .unblock = compute_task_id });
+  @fmovs(arr1_dsd, recv_west_dsd, .{ .async = true, .activate = compute_task_id });
+}
+
+task compute() void {
+  @block(compute_task_id);
+
+  for (@range(u16, num_elems)) |i| {
+    dot_products[idx] += arr0[i] * arr1[i];
+  }
+
+  processed += 1;
+  idx = if (idx == 0) kernel_width-1 else idx-1;
+
+  if (processed == kernel_width-1) {
+    sys_mod.unblock_cmd_stream();
+  } else {
+    // Move vector from arr1 to arr2 so that arr2 can transmit while arr1 receives
+    @fmovs(arr2_dsd, arr1_dsd);
+  
+    @fmovs(send_east_dsd, arr1_dsd, .{ .async = true, .unblock = compute_task_id });
+    @fmovs(arr2_dsd, recv_west_dsd, .{ .async = true, .activate = compute_task_id });
+  }
+}
+
+comptime {
+  @block(compute_task_id);
+  @bind_local_task(compute, compute_task_id);
+
+  @export_symbol(ptr_arr0, "arr0");
+  @export_symbol(ptr_dot_products, "dot_products");
+  @export_symbol(main_fn);
+}

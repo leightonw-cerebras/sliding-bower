@@ -60,11 +60,11 @@ task compute() void {
   if (processed == kernel_width-1) {
     sys_mod.unblock_cmd_stream();
   } else {
-    // Move vector from arr1 to arr2 so that arr1 can transmit while arr2 receives
+    // Move vector from arr1 to arr2 so that arr2 can transmit while arr1 receives
     @fmovs(arr2_dsd, arr1_dsd);
   
-    @fmovs(send_east_dsd, arr1_dsd, .{ .async = true, .unblock = compute_task_id });
-    @fmovs(arr2_dsd, recv_west_dsd, .{ .async = true, .activate = compute_task_id });
+    @fmovs(send_east_dsd, arr2_dsd, .{ .async = true, .unblock = compute_task_id });
+    @fmovs(arr1_dsd, recv_west_dsd, .{ .async = true, .activate = compute_task_id });
   }
 }
 

@@ -23,7 +23,7 @@ const arr1_dsd = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{num_elems} -> arr1[
 
 // Array from which we send out neighbor vector
 var arr2 = @zeros([num_elems]f32);
-const arr2_dsd = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{num_elems} -> arr1[i] });
+const arr2_dsd = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{num_elems} -> arr2[i] });
 
 var dot_products = @zeros([kernel_width]f32);
 var ptr_dot_products : [*]f32 = &dot_products;
@@ -60,7 +60,7 @@ task compute() void {
   if (processed == kernel_width-1) {
     sys_mod.unblock_cmd_stream();
   } else {
-    // Move vector from arr1 to arr2 so that arr2 can transmit while arr1 receives
+    // Move vector from arr1 to arr2 so that arr1 can transmit while arr2 receives
     @fmovs(arr2_dsd, arr1_dsd);
   
     @fmovs(send_east_dsd, arr1_dsd, .{ .async = true, .unblock = compute_task_id });
